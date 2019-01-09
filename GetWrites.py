@@ -2,35 +2,50 @@ import influxdb
 import pytz
 import re
 import threading
-import urllib.request
 from datetime import datetime
 from robobrowser import RoboBrowser
 
-def do_it():
 
-	threading.Timer(3600.0, do_it).start()
-
-	influx = influxdb.InfluxDBClient(host=<insert host name here>, 
-	                     port=<port here>,
-	                     database=<db name here>)
-
+def big_loop():
+	threading.Timer(3600.0,big_loop).start()
+	influx = influxdb.InfluxDBClient(host='<influxdbhost>', 
+	                     port=<port num>,
+	                     database='<db name>')
 	current_time = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-	for server_num in range(1,10):
-		try:
-			if server_num >= 6:
-				url = f"<url...{server_num}...rest of the url>"
-			else:	
-				url = f"<url...{server_num}...rest of the url>"
+	server_list = [1,2,3,4,5,7,8,9]
+	for server_num in server_list:
+		def parse_url(server_num):
+			try:
+				if server_num >= 6:
+					url = f"<url f string with {server num} injected>"
+					first_url = f"<url f string with {server num} injected>"
+				else:	
+					url = f"<url f string with {server num} injected>"
+					first_url = f"<url f string with {server num} injected>"
+			except:
+				print(f"Something went wrong loading SB for C0{server_num}")				
 			br = RoboBrowser(history=True, parser="html.parser")
-			br.open(url)
-			if server_num >= 6:
-				first_url = f"<url...{server_num}...rest of the url>"
+			try:
+				br.open(url) # attempt to open url with RoboBrowser
+			except:
+				print(f"Unable to open {url}")						
+			if server_num == 7:
+				end_scrape = str(br.select('a')[9])[9:46]
 			else:	
-				first_url = f"<url...{server_num}...rest of the url>"
-			end_scrape = str(br.select('a')[9])[9:48]
-			combo_url = first_url+end_scrape
+				end_scrape = str(br.select('a')[9])[9:48]
+			combo_url = first_url+end_scrape # combine both strings to create URL for most recent job
+
+
+			return combo_url
+			
+		parsed_url = parse_url(server_num)	
+
+		def scrape_td(parsed_url):
 			br2 = RoboBrowser(history=True,parser="html.parser")
-			br2.open(combo_url)
+			try:
+				br2.open(parsed_url) # attempt to open up parsed URL
+			except:
+				print(f"Unable to open{parsed_url}")	
 			col_list = [28,29,30, # 1
 						35,36,37, # 2
 						42,43,44, # 3
@@ -64,43 +79,40 @@ def do_it():
 						238,239,240, # 31
 						245,246,247, # 32
 						252,253,254] # 33
-
-			temp_list = []
+			temp_list = [] # empty list to insert writes for each consumer
 			for nums in col_list:
 				try:
-					strp_val = str(br2.select('td')[nums]).replace("<td>","").replace("</td>","").replace(",","")
-					#sb_dict = {f"reads_cl_0{server_num}": int(strp_val)}
-					temp_list.append(int(strp_val))
-					#print(sb_dict)
+					strp_val = str(br2.select('td')[nums]).replace("<td>","").replace("</td>","").replace(",","") # parses string so we can turn 
+					temp_list.append(int(strp_val))																  #	value into an int
 				except:
-					print(f"Less than 33 threads for cluster 0{server_num}")	
-
-			reads_ = temp_list[1::3]
-			reads_totals = sum(reads_)
-			
+					print(f"Less than 33 threads for cluster 0{server_num}")
 			writes_ = temp_list[0::3]
-			writes_totals = sum(writes_)
-			
-			commits_ = temp_list[2::3]
-			commits_totals = sum(commits_)
-			
+			writes_totals = sum(writes_) # total of writes located in temp list
+
+			return writes_totals						
+
+		total_writes = scrape_td(parsed_url)
+
+		def create_dict(total_writes):
 			main_dict = {}
-      main_dict["measurement"] = f"Cluster 0{server_num} Writes"
+			field_vals = {}			
+			main_dict["measurement"] = f"Cluster 0{server_num} Writes"
 			main_dict["time"] = current_time
-			field_vals = {}
 			main_dict["fields"] = field_vals
-			field_vals[f"C_0{server_num}_writes"] = writes_totals
+			field_vals[f"C_0{server_num}_writes"] = total_writes			
 			data = [main_dict]
 
+			return data
 
-		except:
-			print(f"Not working for Cluster {server_num}")			
-		  print(data)
+		final_dict = create_dict(total_writes)	
+		# check for started?  Maybe here?
 
-		try:
-			influx.write_points(data)
-		except:
-			print(f"data for {data} could not be entered.")
-			continue
-	
-do_it()
+		def push_data(final_dict):
+			try:
+				influx.write_points(final_dict)
+			except:
+				print(f"Data could not be writted to InfluxDB for C0{server_num}")	
+		
+		final_run = push_data(final_dict)	
+
+big_loop()
